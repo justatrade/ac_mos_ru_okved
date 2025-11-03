@@ -1,5 +1,7 @@
 import json
 import re
+import datetime
+from pathlib import Path
 from pprint import pprint
 from typing import Dict
 
@@ -13,6 +15,7 @@ json_url = (
     "%25D0%25BE%25D0%25BA%25D0%25B2%25D1%258D%25D0%25B4.json"
 )
 matches = {}
+CACHE_FILE = Path("okved_cache.json")
 
 
 def normalize_russian_phone(phone_number: str) -> str | None:
@@ -25,21 +28,52 @@ def normalize_russian_phone(phone_number: str) -> str | None:
     if not isinstance(phone_number, str):
         return None
 
-    # Getting any digits from a string, ignoring all any other symbols
-    digits = re.sub(r'\D', '', phone_number)
+    extension_patterns = [
+        r"\s*доб[:.]?\s*\d.*$",
+        r"\s*ext[:.]?\s*\d.*$",
+        r"\s*[хxХX]\s*\d.*$",
+        r"\s*#\s*\d.*$",
+        r"\s*\*\s*\d.*$",
+        r"\s*доп[:.]?\s*\d.*$",
+    ]
 
-    if len(digits) == 10:
-        digits = "7" + digits
-    elif len(digits) == 11:
-        if digits[0] == "8":
-            digits = "7" + digits[1:]
-        elif digits[0] != "7":
+    cleaned = phone_number
+    for pattern in extension_patterns:
+        cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+
+    replacements = {
+        "O": "0", "o": "0", "О": "0", "о": '0',
+        "З": "3", "з": "3",
+        "Ч": "4", "ч": "4",
+        "b": "6", "ь": "6",
+        "B": "8", "В": "8", "в": "8",
+    }
+
+    for char, digit in replacements.items():
+        cleaned = cleaned.replace(char, digit)
+
+    # Getting any digits from a string, ignoring all any other symbols
+    digits = re.sub(r"\D", "", cleaned)
+
+    if digits.startswith("007"):
+        digits = "7" + digits[3:]
+    elif digits.startswith("00"):
+        return None
+
+    if digits.startswith("8"):
+        if len(digits) != 11:
             return None
+        digits = "7" + digits[1:]
+    elif digits.startswith("7"):
+        if len(digits) != 11:
+            return None
+    elif len(digits) == 10:
+        digits = "7" + digits
     else:
         return None
 
     if len(digits) == 11 and digits[0] == "7":
-        return '+' + digits
+        return "+" + digits
 
     return None
 
@@ -62,7 +96,7 @@ def get_phone_number() -> str | None:
     if phonenumbers.is_valid_number(phone_number):
         print("Correct phone number")
 
-        return raw_number
+        return normalized
 
     else:
         print("Incorrect phone number")
@@ -70,18 +104,39 @@ def get_phone_number() -> str | None:
     return
 
 
+def check_cache_expired() -> bool:
+    """
+    Check if cache expired
+    :return:
+    """
+    if not CACHE_FILE.exists():
+        return True
+
+    mtime = CACHE_FILE.stat().st_mtime
+    mod_date = datetime.date.fromtimestamp(mtime)
+    today = datetime.date.today()
+
+    return mod_date < today
+
+
 def get_okved_base() -> list[Dict]:
     """
     Getting remote json based list of all OKVEDs
     :return:
     """
-    raw_json = requests.get(
-        url=json_url,
-    )
-    try:
-        okved_base: list[Dict] = raw_json.json()
-    except json.decoder.JSONDecodeError:
-        return []
+    if check_cache_expired():
+        raw_json = requests.get(
+            url=json_url,
+        )
+        try:
+            okved_base: list[Dict] = raw_json.json()
+            with open(CACHE_FILE, "w") as f:
+                json.dump(okved_base, f)
+        except json.decoder.JSONDecodeError:
+            return []
+    else:
+        with open(CACHE_FILE, "r") as f:
+            okved_base = json.load(f)
 
     return okved_base
 

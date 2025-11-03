@@ -28,4 +28,4 @@ The search logic attempts to find OKVED codes that **suffix-match** the phone nu
 3. Install dependencies:
 
    ```bash
-   pip install phonenumbers requests****
+   pip install phonenumbers requests
